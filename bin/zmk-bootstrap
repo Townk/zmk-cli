@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+# shellcheck source=support/_zmk_lib.sh
+. "${BASH_SOURCE[0]%/*}/_zmk_lib.sh"
+
+help() {
+cat << EOF
+ZMK Bootstrap
+-------------
+The ZMK Bootstrap is a helper script that initializes and updates a Zephyr
+'west' project to get it reaady to build.
+
+Calling 'zmk bootstrap' is equivalent to the following, when executed from the
+root directory of a 'west' project:
+
+  $ west init -l config
+  $ west update
+
+The bootstrap process should be ran only once. Updates to the project's
+dependencies should be done by calling:
+
+  $ west update
+
+EOF
+usage
+}
+
+usage() {
+cat << EOF
+Usage: zmk bootstrap [options]
+
+  options:
+    -h, --help                    Show the 'zmk bootstrap' help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      help
+      exit 0
+      ;;
+    *)
+      usage_fail "'zmk bootstrap' does not accept any arguments"
+      ;;
+  esac
+done
+
+WEST_ROOT="$(require_west_project)"
+cd "$WEST_ROOT" || fail "Error while change directory to '$WEST_ROOT'"
+
+if west manifest --validate 2>/dev/null; then
+  fail "It appears that you already bootstrapped this project. If you want to update" \
+    "your project's dependencies, use 'west update' instead."
+else
+  west init -l config
+  west update
+fi

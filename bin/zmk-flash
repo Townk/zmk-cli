@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+# shellcheck source=support/_zmk_lib.sh
+. "${BASH_SOURCE[0]%/*}/_zmk_lib.sh"
+
+help() {
+cat << EOF
+ZMK Flah
+--------
+The ZMK Flash is a script that helps you copy the compiled firmware into a ZMK
+device, guiding you each step of the process.
+
+EOF
+usage
+}
+
+usage() {
+cat << EOF
+Usage: zmk flash [options] <keyboard>
+
+  options:
+    -h, --help                    Show the 'zmk bootstrap' help.
+    -i, --interactive             Allow you to choose what to flash when nothing
+                                  is provided. This option uses FZF with
+                                  multi-selection enabled.
+    -l, --left                    Flash only the left-side of a split keyboard.
+                                  If neither '--left' nor '--right' is passed,
+                                  the 'zmk flash' command will guide you to
+                                  flash both sides sequentially on a split
+                                  keyboard.
+    -r, --right                   Flash only the right-side of a split keyboard.
+                                  If neither '--left' nor '--right' is passed,
+                                  the 'zmk flash' command will guide you to
+                                  flash both sides sequentially on a split
+                                  keyboard.
+EOF
+}
+
+available() {
+  if system_profiler SPUSBDataType 2>/dev/null | grep -Fsq 'nRF UF2'; then
+    for device in $(diskutil list | rg -oNI '/dev/[^ ]*'); do
+      if diskutil info "$device" | grep -Fsq 'nRF UF2'; then
+        diskutil info "$device" | grep -F 'Mount Point:' | cut -d':' -f2 | tr -d '[:space:]'
+      fi
+    done
+  fi
+}
+
+flash() {
+  local FIRMWARE_FILE="$1"
+  local TARGET_DEVICE="$2"
+  local TARGET_PART="$3"
+  local MAIN_SHIELD
+
+  if [ -n "$TARGET_PART" ]; then
+    MAIN_SHIELD="${TARGET_DEVICE}_${TARGET_PART}"
+  else
+    MAIN_SHIELD="${TARGET_DEVICE}"
+  fi
+
+  echo "Flashing shield: $MAIN_SHIELD"
+  echo "-----------------$(echo -n "$MAIN_SHIELD" |  tr '[:print:]' '-')"
+
+  echo "Plug$(
+      [ -n "$TARGET_PART" ] && echo " the '$TARGET_PART' part of"
+    ) your '$TARGET_DEVICE' keyboard via USB, and double-tap the 'reset' button to start" \
+    "flashing the firmware."
+  echo -n "Press ^C to abort."
+
+  MOUNT_POINT="$(available)"
+  while [[ -z "$MOUNT_POINT" ]]; do
+    echo -n .
+    sleep 1
+    MOUNT_POINT="$(available)"
+  done
+
+  printf "\rCopying firmware to%s the '%s' device..." \
+    "$([ -n "$TARGET_PART" ] && echo " the '$TARGET_PART' part of")" \
+    "$TARGET_DEVICE"
+
+  # On macOS, the ZMK firmware finishes its "flashing" process before the
+  # `cp` command finishes its execution. This is normal, and expected
+  # behavior. For us, though, means that this piece of the script will
+  # signalize a failure to Nix, since `cp` will exit with code != than `0`.
+  # The way we prevent a "command failure", is to indicate to nix that we're
+  # handling the error ourselves, which simply indicates that the operation
+  # finished successfully.
+  if ! cp "$FIRMWARE_FILE" "$MOUNT_POINT/" 2>/dev/null; then
+    echo "Done"
+  else
+    echo "Error"
+    fail "There was a failure during firmware copy. Your keyboard might still be in 'bootload' mode!"
+  fi
+}
+
+WEST_ROOT="$(require_west_project)"
+BUILD_SPLIT=""
+INTERACTIVE="n"
+
+declare -a KEYBOARD_IDS
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      help
+      exit 0
+      ;;
+    -l|--left)
+      if [[ -z "$BUILD_SPLIT" ]]; then
+        BUILD_SPLIT="left"
+      elif [[ "$BUILD_SPLIT" = "right" ]]; then
+        BUILD_SPLIT="both"
+      fi
+      ;;
+    -r|--right)
+      if [[ -z "$BUILD_SPLIT" ]]; then
+        BUILD_SPLIT="right"
+      elif [[ "$BUILD_SPLIT" = "left" ]]; then
+        BUILD_SPLIT="both"
+      fi
+      ;;
+    -i|--interactive)
+      INTERACTIVE="y"
+      ;;
+    *)
+      KEYBOARD_IDS+=("$1")
+      ;;
+  esac
+  shift
+done
+
+extract_all_build_config
+filter_build_configs "$BUILD_SPLIT" "${KEYBOARD_IDS[@]}"
+if [[ "${#ZMK_BOARDS[@]}" -eq 0 ]] && [[ "$INTERACTIVE" = "y" ]]; then
+  filter_build_configs_interactively "$BUILD_SPLIT"
+fi
+
+if [[ "${#ZMK_BOARDS[@]}" -eq 0 ]]; then
+  if [[ "${#KEYBOARD_IDS[@]}" -eq 0 ]]; then
+    usage_fail "You need to pass a filter for your builds or 'all' to build all firmwares"
+  else
+    usage_fail "Could not find a build configuration for the given identifiers: ${KEYBOARD_IDS[*]}"
+  fi
+fi
+
+for idx in "${!ZMK_ARTIFACTS[@]}"; do
+  if ! [[ -f "$WEST_ROOT/build/out/${ZMK_ARTIFACTS[$idx]}.uf2" ]]; then
+    fail "You requested to flash the firmware ${ZMK_ARTIFACTS[$idx]}, buit you did not build it" \
+      "yet. Make sure you run 'zmk build ${KEYBOARD_IDS[*]}' to make sure all the target" \
+      "firmwares are built before flashing them."
+  fi
+done
+
+echo "Flashing the following firmwares"
+echo "================================"
+for f in "${ZMK_ARTIFACTS[@]}"; do
+  echo " - $f.uf2"
+done
+echo
+
+TOTAL_SHIELDS="1 shield"
+if [[ "${#ZMK_ARTIFACTS[@]}" -gt 1 ]]; then
+  TOTAL_SHIELDS="${#ZMK_ARTIFACTS[@]} shields"
+fi
+
+echo "ZMK Firmware Flash ($TOTAL_SHIELDS)"
+echo "=====================$(echo -n "$TOTAL_SHIELDS" |  tr '[:print:]' '=')"
+echo
+
+for idx in "${!ZMK_ARTIFACTS[@]}"; do
+  TARGET_PART=""
+  case "${ZMK_SHIELDS[$idx]}" in
+    *_left) TARGET_PART="left" ;;
+    *_right) TARGET_PART="right" ;;
+  esac
+  TARGET_DEVICE="${ZMK_SHIELDS[$idx]%_*}"
+  flash "$WEST_ROOT/build/out/${ZMK_ARTIFACTS[$idx]}.uf2" "$TARGET_DEVICE" "$TARGET_PART"
+done

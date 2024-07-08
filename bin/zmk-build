@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+
+# shellcheck source=support/_zmk_lib.sh
+. "${BASH_SOURCE[0]%/*}/_zmk_lib.sh"
+
+help() {
+cat << EOF
+ZMK Build
+---------
+The ZMK Build is an utility that can build the ZMK firmware for all keyboards
+configured in your project.
+
+This command will use the GitHub Action file 'build.yaml', located at the root
+of your project, to collect all the configuration needed to build the firmwares.
+
+Each keyboard available must have a '.keymap' file defined in the 'config'
+directory, and one or more entries for it in the 'build.yaml' file. Refer to the
+official ZMK documentation on how to configure all that.
+
+EOF
+usage
+}
+
+usage() {
+cat << EOF
+Usage: zmk build [options] <keyboard filter>|all
+
+  <keyboard filter>               Each build defined in the build.yaml file is
+                                  represented by a label given by the following:
+                                  <UF2> (<board>, <shield>, <keymap>, <configs>)
+                                  The filter can be any number of words that can
+                                  narrow which firmwares to build. Each word on
+                                  the filter works as an accumulative filter,
+                                  meaning that if you pass more words, you get
+                                  less results.
+
+  all                             Build all firmwares defined in the
+                                  'build.yaml' file.
+
+  options:
+    -c, --clean                   Remove intermediary and final artifacts
+                                  generated during a build for the selected
+                                  keyboard.
+    -h, --help                    Show the 'zmk build' help.
+    -i, --interactive             Allow you to choose what to build when nothing
+                                  is provided. This option uses FZF with
+                                  multi-selection enabled.
+    -l, --left                    Build only the left-side of a split
+                                  keyboard. If neither '--left' nor '--right' is
+                                  passed, the 'zmk build' command will build
+                                  both on split keyboard.
+    -p, --pristine                Run a 'west' build with the 'pristine' flag.
+    -r, --right                   Build only the right-side of a split
+                                  keyboard. If neither '--left' nor '--right' is
+                                  passed, the 'zmk build' command will build
+                                  both on split keyboard.
+    -s, --settings-reset          Build the 'settings-reset' firmware for the
+                                  board configured on the given <keyboard>.
+                                  Cannot be used with 'all' as keyboard.
+EOF
+}
+
+build() {
+  local BOARD="$1"
+  local MAIN_SHIELD="$2"
+  local EXTRA_SHIELDS
+  if [[ "$3" = "-" ]]; then
+    EXTRA_SHIELDS=""
+  else
+    EXTRA_SHIELDS=" $3"
+  fi
+  local -a CMAKE_FLAGS
+  if [[ "$4" = '-' ]]; then
+    CMAKE_FLAGS=()
+  else
+    read -r -a CMAKE_FLAGS < <(echo -n "$4")
+  fi
+  local PRISTINE_FLAG
+  if [[ "$PRISTINE" = "y" ]]; then
+    PRISTINE_FLAG="-p"
+  fi
+
+  echo "Building shield: $MAIN_SHIELD"
+  echo "-----------------$(echo -n "$MAIN_SHIELD" |  tr '[:print:]' '-')"
+
+  local ZEPHYR_DIR
+  ZEPHYR_DIR="$(west list -f '{name}|{abspath}' | grep -F 'zephyr|' | cut -d'|' -f2)"
+  local ZMK_DIR
+  ZMK_DIR="$(west list -f '{name}|{abspath}' | grep -F 'zmk|' | cut -d'|' -f2)"
+
+  if [[ -z "$PRISTINE_FLAG" ]]\
+    && [[ -f "$WEST_ROOT/build/intermediate/${MAIN_SHIELD}/zephyr/zmk.uf2" ]]; then
+      west build -d "$WEST_ROOT/build/intermediate/$MAIN_SHIELD" \
+        || fail "The firmware for shield '$MAIN_SHIELD' failed to build. Check the logs above."
+    else
+      west build $PRISTINE_FLAG -s "$ZMK_DIR/app" \
+        -d "$WEST_ROOT/build/intermediate/$MAIN_SHIELD" \
+        -b "$BOARD" \
+        -- -DZephyr_DIR="$ZEPHYR_DIR/share/zephyr-package/cmake" \
+          -DSHIELD="${MAIN_SHIELD}${EXTRA_SHIELDS}" \
+          -DZMK_CONFIG="$WEST_ROOT/config" \
+          "${CMAKE_FLAGS[@]}" \
+        || fail "The firmware for shield '$MAIN_SHIELD' failed to build. Check the logs above."
+  fi
+  echo
+}
+
+store() {
+  local MAIN_SHIELD="$1"
+  local ARTIFACT_FILE_NAME="$2"
+
+  if [[ ! -d "$WEST_ROOT/build/out" ]]; then
+    mkdir -p "$WEST_ROOT/build/out" \
+      || fail "Failed to create the firmware output directory"
+  fi
+
+  cp -f \
+    "$WEST_ROOT/build/intermediate/${MAIN_SHIELD}/zephyr/zmk.uf2" \
+    "$WEST_ROOT/build/out/$ARTIFACT_FILE_NAME.uf2" \
+    || fail "Failed to copy the '$MAIN_SHIELD' firmware to the output directory"
+
+  echo "Firmware of '$MAIN_SHIELD' located at 'build/out/$ARTIFACT_FILE_NAME.uf2'"
+  echo
+}
+
+clean() {
+  echo "Cleaning artifacts of shield: $1"
+  echo "------------------------------$(echo -n "$1" |  tr '[:print:]' '-')"
+
+  local MAIN_SHIELD="$1"
+  local ARTIFACT_FILE_NAME="$2"
+  local INTERMEDIARY_DIR="$WEST_ROOT/build/intermediate/$MAIN_SHIELD"
+  local ARTIFACT_FILE="$WEST_ROOT/build/out/$ARTIFACT_FILE_NAME.uf2"
+
+  if [[ -d "$INTERMEDIARY_DIR" ]]; then
+    rm -rf "$INTERMEDIARY_DIR" \
+      || fail "Failed to remove the build output for the '$MAIN_SHIELD' shield"
+  fi
+
+  if [[ -f "$ARTIFACT_FILE" ]]; then
+    rm -rf "$ARTIFACT_FILE" \
+      || fail "Failed to remove the output firmware for the '$MAIN_SHIELD' shield"
+  fi
+}
+
+WEST_ROOT="$(require_west_project)"
+ACTION="build"
+BUILD_SPLIT=""
+FIRMWARE_TYPE="default"
+INTERACTIVE="n"
+PRISTINE="n"
+
+declare -a KEYBOARD_IDS
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      help
+      exit 0
+      ;;
+    -c|--clean)
+      ACTION="clean"
+      ;;
+    -s|--settings-reset)
+      FIRMWARE_TYPE="reset"
+      ;;
+    -p|--pristine)
+      PRISTINE="y"
+      ;;
+    -l|--left)
+      if [[ -z "$BUILD_SPLIT" ]]; then
+        BUILD_SPLIT="left"
+      elif [[ "$BUILD_SPLIT" = "right" ]]; then
+        BUILD_SPLIT="both"
+      fi
+      ;;
+    -r|--right)
+      if [[ -z "$BUILD_SPLIT" ]]; then
+        BUILD_SPLIT="right"
+      elif [[ "$BUILD_SPLIT" = "left" ]]; then
+        BUILD_SPLIT="both"
+      fi
+      ;;
+    -i|--interactive)
+      INTERACTIVE="y"
+      ;;
+    *)
+      KEYBOARD_IDS+=("$1")
+      ;;
+  esac
+  shift
+done
+
+extract_all_build_config
+filter_build_configs "$BUILD_SPLIT" "${KEYBOARD_IDS[@]}"
+if [[ "${#ZMK_BOARDS[@]}" -eq 0 ]] && [[ "$INTERACTIVE" = "y" ]]; then
+  filter_build_configs_interactively "$BUILD_SPLIT"
+fi
+
+if [[ "${#ZMK_BOARDS[@]}" -eq 0 ]]; then
+  if [[ "${#KEYBOARD_IDS[@]}" -eq 0 ]]; then
+    usage_fail "You need to pass a filter for your builds or 'all' to build all firmwares"
+  else
+    usage_fail "Could not find a build configuration for the given identifiers: ${KEYBOARD_IDS[*]}"
+  fi
+fi
+
+echo "Building the following firmwares"
+echo "================================"
+for f in "${ZMK_ARTIFACTS[@]}"; do
+  echo " - $f.uf2"
+done
+echo
+
+if [[ "$ACTION" = "build" ]]; then
+  echo "ZMK Firmware Build"
+  echo "=================="
+
+  for idx in "${!ZMK_BOARDS[@]}"; do
+    echo
+    if [[ "$FIRMWARE_TYPE" = "reset" ]]; then
+      build "${ZMK_BOARDS[$idx]}" "settings_reset"
+      store "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
+    else
+      build "${ZMK_BOARDS[$idx]}" \
+            "${ZMK_SHIELDS[$idx]}" \
+            "${ZMK_EXTRA_SHIELDS[$idx]}" \
+            "${ZMK_CMAKE_ARGS[$idx]}"
+      store "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
+    fi
+  done
+else
+  echo "ZMK Firmware Artifacts Clean Up"
+  echo "==============================="
+
+  for idx in "${!ZMK_BOARDS[@]}"; do
+    echo
+    if [[ "$FIRMWARE_TYPE" = "reset" ]]; then
+      clean "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
+    else
+      clean "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
+    fi
+  done
+fi

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+
+# shellcheck source=support/_zmk_lib.sh
+. "${BASH_SOURCE[0]%/*}/_zmk_lib.sh"
+
+help() {
+cat << EOF
+ZMK Clean
+---------
+The ZMK Clean is a helper script that remove all files and directories created
+during project initialization and firmware build.
+
+The 'zmk clean' command remove 3 'west' directories, regardless of them having
+extra files inside. These directories are:
+
+  - $WEST_PROJECT_ROOT/build
+  - $WEST_PROJECT_ROOT/modules
+  - $WEST_PROJECT_ROOT/.west
+
+Modules initialized outside these directories will still be cleaned, but their
+parent directories won't be touched.
+
+EOF
+usage
+}
+
+usage() {
+cat << EOF
+Usage: zmk clean [options]
+
+  options:
+    -h, --help                    Show the 'zmk clean' help.
+    -v, --verbose                 Show cleaning messages for everything
+                                  including individual modules.
+    -s, --silent                  Don't pring any messages.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      help
+      exit 0
+      ;;
+    -v|--verbose)
+      OUT_LEVEL="verbose"
+      ;;
+    -s|--silent)
+      OUT_LEVEL="none"
+      ;;
+    *)
+      fail "'zmk clean' does not accept any arguments"
+      ;;
+  esac
+  shift
+done
+
+WEST_ROOT="$(require_west_project)"
+
+# cd "$WEST_ROOT" || fail "Error while change directory to '$WEST_ROOT'"
+
+if west manifest --validate 2>/dev/null; then
+  EXIT_CODE=$((0))
+  WEST_MANIFEST_DIR=$(west manifest --path)
+  WEST_MANIFEST_DIR="${WEST_MANIFEST_DIR%/*}"
+  [[ "$OUT_LEVEL" != "none" ]] && printf "🧹 Cleaning build directory..."
+  if rm -rf "$WEST_ROOT/build" >/dev/null 2>&1; then
+    [[ "$OUT_LEVEL" != "none" ]] && printf "\r✅ Cleaning build directory... Done\n"
+  else
+    [[ "$OUT_LEVEL" != "none" ]] && printf "\r❌ Cleaning build directory... ERROR\n"
+    EXIT_CODE=$((1))
+  fi
+  if [[ $EXIT_CODE -eq 0 ]]; then
+    [[ "$OUT_LEVEL" == "normal" ]] && printf "🧹 Cleaning all west modules..."
+    for WEST_MODULE in $(west list -f '{abspath}'); do
+      if [[ "$WEST_MODULE" != "$WEST_MANIFEST_DIR" ]]; then
+        case "${WEST_MODULE#"$WEST_ROOT/"}" in
+          .west*) ;;
+          *)
+            [[ "$OUT_LEVEL" = "verbose" ]] && printf "🧹 Cleaning module '%s'..." "${WEST_MODULE##*/}"
+            if rm -rf "$WEST_MODULE" >/dev/null 2>&1; then
+              [[ "$OUT_LEVEL" = "verbose" ]] && printf "\r✅ Cleaning module '%s'... Done\n" "${WEST_MODULE##*/}"
+            else
+              [[ "$OUT_LEVEL" = "verbose" ]] && printf "\r❌ Cleaning module '%s'... ERROR\n" "${WEST_MODULE##*/}"
+              EXIT_CODE=$((1))
+            fi
+            ;;
+        esac
+      fi
+    done
+    if [[ "$OUT_LEVEL" == "normal" ]]; then
+      if [[ $EXIT_CODE -eq 0 ]]; then
+        printf "\r✅ Cleaning all west modules... Done\n"
+      else
+        printf "\r❌ Cleaning all west modules... ERROR\n"
+      fi
+    fi
+    [[ "$OUT_LEVEL" != "none" ]] && printf "🧹 Cleaning west modules directory..."
+    if rm -rf "$WEST_ROOT/modules" >/dev/null 2>&1; then
+      [[ "$OUT_LEVEL" != "none" ]] && printf "\r✅ Cleaning west modules directory... Done\n"
+    else
+      [[ "$OUT_LEVEL" != "none" ]] && printf "\r❌ Cleaning west modules directory... ERROR\n"
+      EXIT_CODE=$((1))
+    fi
+    [[ "$OUT_LEVEL" != "none" ]] && printf "🧹 Cleaning west project directory..."
+    if rm -rf "$WEST_ROOT/.west" >/dev/null 2>&1; then
+      [[ "$OUT_LEVEL" != "none" ]] && printf "\r✅ Cleaning west project directory... Done\n"
+    else
+      [[ "$OUT_LEVEL" != "none" ]] && printf "\r❌ Cleaning west project directory... ERROR\n"
+      EXIT_CODE=$((1))
+    fi
+  fi
+else
+  fail "The 'west manifest --validate' command returned an error, and 'zmk clean' cannot " \
+    "preform the cleaning. Fix any problems with your project, or initialize it, and try again."
+fi
+
+exit "$EXIT_CODE"

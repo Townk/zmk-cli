@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+ZMK_CLI_VERSION="v0.3.0"
+
+
+help() {
+cat << EOF
+ZMK CLI
+-------
+The ZMK CLI is a collection of utilities that help you build the firmware of
+your keyboard without having to use multple directories for repositories.
+
+Each "command" from the CLI is a standalone script that can be invoked by
+calling:
+
+  $ zmk-<command> [options]
+
+To see details on each command, call them with the option '--help':
+
+  $ zmk build --help
+
+EOF
+usage
+}
+
+usage() {
+cat << EOF
+Usage: zmk [options] <command> [command-options]
+
+  options:
+    -h, --help                    Show the 'zmk' help
+    -v, --version                 Display the tool's current version
+
+  command:
+    bootstrap [command-options]   Initialize a 'zmk-config' directory to start
+                                  building the configuration from inside of it.
+    build [command-options]       Compile the ZMK User Configuration and
+                                  generate the firmware to the defined
+                                  keyboards.
+    flash [command-options]       Guided copy of the generated firmware to a
+                                  device
+    clean [command-options]       Remove all files and directories created to
+                                  build the ZMK firmware on the project.
+EOF
+}
+
+fail() {
+  printf "ERROR: %s\n\n" "$@" >&2
+  usage
+  exit 1
+}
+
+if [[ $# -eq 0 ]]; then
+  help
+  exit 0
+fi
+
+ZMK_CLI_COMMAND=""
+declare -a ZMK_CLI_ARGS
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      help
+      exit 0
+      ;;
+    -v|--version)
+      echo "$ZMK_CLI_VERSION"
+      exit 0
+      ;;
+    -[a-zA-Z0-9]|--*)
+      fail "Unknown options passed '$1'"
+      ;;
+    *)
+      ZMK_CLI_COMMAND="$1"
+      shift
+      while [[ $# -gt 0 ]]; do
+        ZMK_CLI_ARGS+=("$1") # save positional arg
+        shift
+      done
+      ;;
+  esac
+done
+
+command -v -- "zmk-${ZMK_CLI_COMMAND}" >/dev/null 2>&1 \
+  || fail "Unknown command: '${ZMK_CLI_COMMAND}'"
+
+exec "zmk-${ZMK_CLI_COMMAND}" "${ZMK_CLI_ARGS[@]}"
