@@ -1,16 +1,41 @@
 #!/usr/bin/env bash
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
 
+# This file is a library of helper functions that are used by two or more
+# scripts on the ZMK CLI stack.
+#
+# Sourcing this file will also export to your script a set of variables that
+# can be used to determine which build configuration to use on the CLI
+# commands.
+
+# Function that prints an error message to `stderr` and exit the script with
+# error code `1`.
+#
+# @param $* {string...} Text to be used as the failing message.
 fail() {
   [[ "$OUT_LEVEL" != "none" ]] && printf "ERROR: %s\n\n" "$*" | fmt -w 80 >&2
   exit 1
 }
 
+# Function that prints an error message to `stderr`, followed by usage
+# instructions of the script, and exit the script with error code `2`.
+#
+# @param $* {string...} Text to be used as the failing message.
 usage_fail() {
   [[ "$OUT_LEVEL" != "none" ]] && printf "ERROR: %s\n\n" "$*" | fmt -w 80 >&2
   usage
   exit 2
 }
 
+# Starting from the giving directory (`$1`), traverse directories upwards in
+# the tree, until we can find a `west.yml` file inside a `config` directory
+# (`./config/west.yml`). If the `west.yml` file is found, this function will
+# print the directory where it was found.
+#
+# @param $1 {path} The directory used to start the upward search.
 find_west_root() {
   if [[ -f "$1/config/west.yml" ]]; then
     printf "%s" "$1"
@@ -19,6 +44,9 @@ find_west_root() {
   fi
 }
 
+# Try to find the 'west' root directory on the current working directory, and
+# fail if it is not found. When found, this function will print the absolute
+# path of the root dir.
 require_west_project() {
   local root_dir
   root_dir="$(find_west_root "$PWD")"
@@ -27,27 +55,61 @@ require_west_project() {
   printf "%s" "$root_dir"
 }
 
+# Given a shield name (`$1`), returns a modified string that the CLI uses as
+# the `.uf2` artifact file name.
+#
+# @param $1 {string} A ZMK shield name.
 artifact_name() {
   print "%s" "zmk-$(printf "%s" "$1" | tr '_' '-')"
 }
 
+# Check if a config file (which is any file that lives in the `./config/`
+# directory of the ZMK configuration) exists, and print its _basename_ in case
+# it does.
+#
+# The file to check is given by two arguments, a core name `($1)`, and an
+# extension `($2)`. This function also search for side variants of the file
+# (core names with suffix `_left` or `_right`) as well.
+#
+# @param $1 {string} A core name for a config file.
+# @param $2 {string} The extension of the file to be searched.
 config_file() {
-  local KEYMAP="${1}.$2"
-  if [[ -f "$WEST_ROOT/config/$KEYMAP" ]]; then
-    printf "%s" "$KEYMAP"
+  local CONFIG_FILE="${1}.$2"
+  if [[ -f "$WEST_ROOT/config/$CONFIG_FILE" ]]; then
+    printf "%s" "$CONFIG_FILE"
   else
-    KEYMAP="${1%_left}.$2"
-    if [[ -f "$WEST_ROOT/config/$KEYMAP" ]]; then
-      printf "%s" "$KEYMAP"
+    CONFIG_FILE="${1%_left}.$2"
+    if [[ -f "$WEST_ROOT/config/$CONFIG_FILE" ]]; then
+      printf "%s" "$CONFIG_FILE"
     else
-      KEYMAP="${1%_right}.$2"
-      if [[ -f "$WEST_ROOT/config/$KEYMAP" ]]; then
-        printf "%s" "$KEYMAP"
+      CONFIG_FILE="${1%_right}.$2"
+      if [[ -f "$WEST_ROOT/config/$CONFIG_FILE" ]]; then
+        printf "%s" "$CONFIG_FILE"
       fi
     fi
   fi
 }
 
+# This function uses `yq` to parse the `build.yaml` file that a ZMK
+# configuration should have to use the ZMK GitHub action to build it, and fill
+# six auxiliar array variables that will hold values of each build
+# configuration declared there.
+#
+# The variables filled by this function are:
+#
+# - ZMK_ALL_LABELS
+# - ZMK_ALL_BOARDS
+# - ZMK_ALL_SHIELDS
+# - ZMK_ALL_EXTRA_SHIELDS
+# - ZMK_ALL_CMAKE_ARGS
+# - ZMK_ALL_ARTIFACTS
+#
+# All items in these arrays are aligned, meaning that for each index in one of
+# these variables, it is guarantee that the other variables also have items on
+# the same index, and all these values belong to the same build configuration.
+#
+# This function detects the correct keymap and conf files, even when those are
+# passes as CMake arguments on the build configuration.
 extract_all_build_config() {
   ZMK_ALL_LABELS=()
   ZMK_ALL_BOARDS=()
@@ -131,6 +193,32 @@ extract_all_build_config() {
   done
 }
 
+# Given a set of terms, this function can filter all build configurations
+# extracted with the `extract_all_build_config` function and keep just the ones
+# that match the terms.
+#
+# Each term in the arguments is used with an `AND` operation. For instance, if
+# you pass the term `corne`, this function will filter all build configurations
+# defined for any Corne keyboard. Now, if you give the terms `corne` and`oled`,
+# this function will first filter all the Corne builds, then it will filter the
+# result further to include only the ones with the term `oled` in its
+# description.
+#
+# The remaining configurations are stored on the following variables:
+#
+# - ZMK_LABELS
+# - ZMK_BOARDS
+# - ZMK_SHIELDS
+# - ZMK_EXTRA_SHIELDS
+# - ZMK_CMAKE_ARGS
+# - ZMK_ARTIFACTS
+#
+# @param $1 {"left"|"right"|"both"|""} A part target string that will
+#        pre-filter shields for the given part. If this parameter is empty or
+#        the string "both", there will be no filtering based on which side of
+#        the keyboard to build.
+# @param $* {string...} A set of terms to use to filter all build
+#        configurations stored on the `ZMK_ALL_*` variables.
 filter_build_configs() {
   [[ "$#" -gt 0 ]] || fail "Missing build part target on filter config function"
   local KB_PART_TARGET="$1"
@@ -193,6 +281,25 @@ filter_build_configs() {
   fi
 }
 
+# This function is similar to the `filter_build_configs` function, except it
+# uses `fzf` with multi-selection to allow the user to choose which shields to
+# build interactively.
+#
+# After filtering all the configurations parsed by the
+# `extract_all_build_config` function, it will store the remainning values on
+# the following variables:
+#
+# - ZMK_LABELS
+# - ZMK_BOARDS
+# - ZMK_SHIELDS
+# - ZMK_EXTRA_SHIELDS
+# - ZMK_CMAKE_ARGS
+# - ZMK_ARTIFACTS
+#
+# @param $1 {"left"|"right"|"both"|""} A part target string that will
+#        pre-filter shields for the given part. If this parameter is empty or
+#        the string "both", there will be no filtering based on which side of
+#        the keyboard to build.
 filter_build_configs_interactively() {
   [[ "$#" -gt 0 ]] || fail "Missing build part target on filter config function"
   local KB_PART_TARGET="$1"
@@ -236,7 +343,6 @@ declare -a ZMK_ALL_SHIELDS
 declare -a ZMK_ALL_EXTRA_SHIELDS
 declare -a ZMK_ALL_CMAKE_ARGS
 declare -a ZMK_ALL_ARTIFACTS
-
 declare -a ZMK_BOARDS
 declare -a ZMK_SHIELDS
 declare -a ZMK_EXTRA_SHIELDS

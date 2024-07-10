@@ -1,7 +1,10 @@
-# Keymap-drawer uses version 3 of `platformdirs` but NixPkgst only has
-# version 4.2 available. It's easier to brging the package from GitHub than
-# creating a flake input for an old version of NixPkgs, just to get this one
-# dependency
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
+# Keymap-drawer uses version 3 of `platformdirs` but NixPkgst only has version
+# 4.2 available. It's easier to bring the package from GitHub than creating a
+# flake input for an old version of NixPkgs, just to get this one dependency
 {
   pkgs,
   python3Packages,

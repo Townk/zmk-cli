@@ -1,3 +1,7 @@
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
 {
   description = "Build environment for ZMK local builds";
 
@@ -53,13 +57,11 @@
 
             Make sure to check the help information of each one of the ZMK CLI commands:
 
-            ```sh
-            $ zmk --help
-            $ zmk bootstrap --help
-            $ zmk build --help
-            $ zmk flash --help
-            $ zmk clean --help
-            ```
+            - `zmk --help`
+            - `zmk bootstrap --help`
+            - `zmk build --help`
+            - `zmk flash --help`
+            - `zmk clean --help`
           '';
         };
       };

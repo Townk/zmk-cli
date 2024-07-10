@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
+
+# The `zmk` script is the entry script for all ZMK CLI commands. It will use
+# the argument given to it to find a script named the same as the argument plus
+# the prefix `zmk-`. For instance, if one executes `zmk build`, the `zmk`
+# script will try to find a executable command named `zmk-build`. This allow
+# others to create custom commands that will be run by the this script.
 
 ZMK_CLI_VERSION="v0.3.0"
-
 
 help() {
 cat << EOF

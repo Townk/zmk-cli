@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
 
-# shellcheck source=support/_zmk_lib.sh
+# shellcheck source=_zmk_lib.sh
 . "${BASH_SOURCE[0]%/*}/_zmk_lib.sh"
 
 help() {

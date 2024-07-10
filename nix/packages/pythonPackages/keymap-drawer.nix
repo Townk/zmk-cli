@@ -1,5 +1,13 @@
-# NixPkgs does not offer `keymap-drawer` as a python package nor a
-# stand-alone application, so we have  pull the package into our environment
+#-------------------------------------------------------------------------------
+# Copyright (c) 2024 Thiago Alves
+# SPDX-License-Identifier: MIT
+#-------------------------------------------------------------------------------
+# NixPkgs does not offer `keymap-drawer` as a python package nor a stand-alone
+# application, so we have tp pull the package into our environment using
+# github.
+#
+# This has the additional benefit of using the latest fixes on the project
+# before the maintainer publishes a new bersion to PyPI.
 {
   pkgs,
   python3Packages,
