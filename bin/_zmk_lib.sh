@@ -133,14 +133,17 @@ extract_all_build_config() {
   local CMAKE_FLAG
   local FLAG_VAL
   local LABEL
+  local YQ_BIN
+  YQ_BIN="$(yq_bin)"
 
-  readarray CONFIGURED_BUILDS < <(yq -o=j -I=0 ".include[]" "$WEST_ROOT/build.yaml")
+  readarray CONFIGURED_BUILDS < <($YQ_BIN -o=j -I=0 ".include[]" "$WEST_ROOT/build.yaml")
   for SHIELD_BUILD in "${CONFIGURED_BUILDS[@]}"; do
-    BOARD="$(echo "${SHIELD_BUILD}" | yq '.board' -)"
-    SHIELD_STR="$(echo "${SHIELD_BUILD}" | yq '.shield' -)"
-    CMAKE_ARGS_STR="$(echo "${SHIELD_BUILD}" | yq '.cmake-args' -)"
-    ARTIFACT_NAME="$(echo "${SHIELD_BUILD}" | yq '.artifact-name' -)"
     NICKNAME="$(echo "${SHIELD_BUILD}" | yq '.nickname' -)"
+    KEYBOARD="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.keyboard' -)"
+    BOARD="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.board' -)"
+    SHIELD_STR="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.shield' -)"
+    CMAKE_ARGS_STR="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.cmake-args' -)"
+    ARTIFACT_NAME="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.artifact-name' -)"
 
     IFS=' ' read -r -a SHIELD <<< "$SHIELD_STR"
     if [[ "$CMAKE_ARGS_STR" = 'null' ]]; then
@@ -335,6 +338,63 @@ filter_build_configs_interactively() {
     ZMK_CMAKE_ARGS+=("${ZMK_ALL_CMAKE_ARGS[$idx]}")
     ZMK_ARTIFACTS+=("${ZMK_ALL_ARTIFACTS[$idx]}")
   done
+}
+
+# Prints the `yq` URL for the download of its portable binary. If the current
+# platform or architechture is not supported, it will print nothing.
+yq_remote_bin_name() {
+  local OS
+  local ARCH
+  local YQ_BINARY
+  OS="$(uname -o | tr '[:upper:]' '[:lower:]')"
+  ARCH="$(uname -m)"
+  YQ_BINARY="yq_${OS}"
+  case "$OS" in
+    darwin) 
+      if [[ "$ARCH" = "arm"* ]]; then
+        YQ_BINARY="${YQ_BINARY}_arm64"
+      else
+        YQ_BINARY="${YQ_BINARY}_arm64"
+      fi
+      ;;
+    *)
+      YQ_BINARY=""
+      ;;
+  esac
+  if [[ -n "$YQ_BINARY" ]]; then
+    printf "%s" "${YQ_BINARY}"
+  fi
+}
+
+# Prints the `yq` binary path to be used by the ZMK CLI.
+# If the host system does not have `yq` installed, this function will try to
+# download the correct binary from GitHub, and fail in case it cannot do it.
+yq_bin() {
+  local YQ_VERSION="4.44.1"
+  local YQ_BINARY
+  local YQ_TARGET_BINARY
+  local YQ_URL="https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}"
+  YQ_BINARY="$(command -v yq)"
+  if [[ -z "${YQ_BINARY}" ]]; then
+    YQ_TARGET_BINARY="${BASH_SOURCE[0]%/*}/yq"
+    YQ_BINARY="$(yq_remote_bin_name)"
+    if [[ -z "${YQ_BINARY}" ]]; then
+      fail "You don't have 'yq' installed, and your platform is still not supported by ZMK CLI." \
+        "Consider making a pull request with the changes on the script so we can support all" \
+        "possible platforms!"
+    fi
+    curl -L "${YQ_URL}/${YQ_BINARY}.tar.gz" \
+      | tar xz \
+      || fail "Failed to download the 'yq' binary from '${YQ_URL}/${YQ_BINARY}.tar.gz'"
+    if ! mv "${YQ_BINARY}" "${YQ_TARGET_BINARY}"; then
+      rm -rf "${YQ_BINARY}" >/dev/null 2>&1
+      fail "Failed to move the 'yq' binary to the same binary directory of ZMK CLI"
+    fi
+    chmod +x "${YQ_TARGET_BINARY}" \
+      || fail "Failed to change the 'executable' permission of 'yq' on ZMK CLI directory"
+    YQ_BINARY="${YQ_TARGET_BINARY}"
+  fi
+  printf "%s" "${YQ_BINARY}"
 }
 
 declare -a ZMK_ALL_LABELS
