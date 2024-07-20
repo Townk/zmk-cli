@@ -50,8 +50,8 @@ find_west_root() {
 require_west_project() {
   local root_dir
   root_dir="$(find_west_root "$PWD")"
-  [[ -n $root_dir ]] \
-    || usage_fail "You must run the 'zmk' command from a ZMK user configuration project"
+  [[ -n $root_dir ]] ||
+    usage_fail "You must run the 'zmk' command from a ZMK user configuration project"
   printf "%s" "$root_dir"
 }
 
@@ -112,6 +112,7 @@ config_file() {
 # passes as CMake arguments on the build configuration.
 extract_all_build_config() {
   ZMK_ALL_LABELS=()
+  ZMK_ALL_KEYBOARDS=()
   ZMK_ALL_BOARDS=()
   ZMK_ALL_SHIELDS=()
   ZMK_ALL_EXTRA_SHIELDS=()
@@ -123,11 +124,11 @@ extract_all_build_config() {
   local -a CMAKE_ARGS
 
   local SHIELD_BUILD
+  local KEYBOARD
   local BOARD
   local SHIELD_STR
   local CMAKE_ARGS_STR
   local ARTIFACT_NAME
-  local NICKNAME
   local KEYMAP
   local CONF
   local CMAKE_FLAG
@@ -138,29 +139,37 @@ extract_all_build_config() {
 
   readarray CONFIGURED_BUILDS < <($YQ_BIN -o=j -I=0 ".include[]" "$WEST_ROOT/build.yaml")
   for SHIELD_BUILD in "${CONFIGURED_BUILDS[@]}"; do
-    NICKNAME="$(echo "${SHIELD_BUILD}" | yq '.nickname' -)"
     KEYBOARD="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.keyboard' -)"
     BOARD="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.board' -)"
     SHIELD_STR="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.shield' -)"
     CMAKE_ARGS_STR="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.cmake-args' -)"
     ARTIFACT_NAME="$(echo "${SHIELD_BUILD}" | $YQ_BIN '.artifact-name' -)"
 
-    IFS=' ' read -r -a SHIELD <<< "$SHIELD_STR"
+    IFS=' ' read -r -a SHIELD <<<"$SHIELD_STR"
+
+    if [[ "$ARTIFACT_NAME" = "null" ]]; then
+      ARTIFACT_NAME="$(artifact_name "${SHIELD[0]}")"
+    fi
+
+    if [[ "$KEYBOARD" = 'null' ]]; then
+      KEYBOARD="${SHIELD[0]}"
+      LABEL="$ARTIFACT_NAME.uf2"
+    else
+      LABEL="$KEYBOARD"
+    fi
+
     if [[ "$CMAKE_ARGS_STR" = 'null' ]]; then
       CMAKE_ARGS_STR=''
       CMAKE_ARGS=()
     else
       read -r -a CMAKE_ARGS < <(echo -n "$CMAKE_ARGS_STR")
     fi
-    if [[ "$ARTIFACT_NAME" = "null" ]]; then
-      ARTIFACT_NAME="$(artifact_name "${SHIELD[0]}")"
-    fi
 
     KEYMAP="$(config_file "${SHIELD[0]}" "keymap")"
     CONF="$(config_file "${SHIELD[0]}" "conf")"
     if [[ "${#CMAKE_ARGS[@]}" -gt 0 ]]; then
       for CMAKE_FLAG in "${CMAKE_ARGS[@]}"; do
-        IFS='=' read -r -a FLAG_VAL <<< "$CMAKE_FLAG"
+        IFS='=' read -r -a FLAG_VAL <<<"$CMAKE_FLAG"
         if [[ "${FLAG_VAL[0]}" = "-DKEYMAP_FILE" ]]; then
           KEYMAP="${FLAG_VAL[1]##*/}"
         elif [[ "${FLAG_VAL[0]}" = "-DEXTRA_CONF_FILE" ]]; then
@@ -172,11 +181,6 @@ extract_all_build_config() {
       done
     fi
 
-    if [[ "$NICKNAME" = "null" ]]; then
-      LABEL="$ARTIFACT_NAME.uf2"
-    else
-      LABEL="$NICKNAME"
-    fi
     LABEL="$LABEL ($BOARD, ${SHIELD[0]}"
     if [[ -n "$KEYMAP" ]]; then
       LABEL="$LABEL, $KEYMAP"
@@ -187,6 +191,7 @@ extract_all_build_config() {
     LABEL="$LABEL)"
 
     ZMK_ALL_LABELS+=("$LABEL")
+    ZMK_ALL_KEYBOARDS+=("$KEYBOARD")
     ZMK_ALL_BOARDS+=("$BOARD")
     ZMK_ALL_SHIELDS+=("${SHIELD[0]}")
     unset 'SHIELD[0]'
@@ -210,6 +215,7 @@ extract_all_build_config() {
 # The remaining configurations are stored on the following variables:
 #
 # - ZMK_LABELS
+# - ZMK_KEYBOARDS
 # - ZMK_BOARDS
 # - ZMK_SHIELDS
 # - ZMK_EXTRA_SHIELDS
@@ -229,6 +235,7 @@ filter_build_configs() {
 
   if [[ "$#" -gt 0 ]]; then
     local -a FILTERED_ZMK_LABELS=("${ZMK_ALL_LABELS[@]}")
+    local -a FILTERED_ZMK_KEYBOARDS=("${ZMK_ALL_KEYBOARDS[@]}")
     local -a FILTERED_ZMK_BOARDS=("${ZMK_ALL_BOARDS[@]}")
     local -a FILTERED_ZMK_SHIELDS=("${ZMK_ALL_SHIELDS[@]}")
     local -a FILTERED_ZMK_EXTRA_SHIELDS=("${ZMK_ALL_EXTRA_SHIELDS[@]}")
@@ -240,6 +247,7 @@ filter_build_configs() {
 
     for KB in "$@"; do
       if [[ "$KB" = "all" ]]; then
+        ZMK_KEYBOARDS=("${ZMK_ALL_KEYBOARDS[@]}")
         ZMK_BOARDS=("${ZMK_ALL_BOARDS[@]}")
         ZMK_SHIELDS=("${ZMK_ALL_SHIELDS[@]}")
         ZMK_EXTRA_SHIELDS=("${ZMK_ALL_EXTRA_SHIELDS[@]}")
@@ -248,24 +256,25 @@ filter_build_configs() {
         BUILD_ALL='y'
         break
       fi
-    
+
       FILTER_IDX=()
-    
+
       for idx in "${!FILTERED_ZMK_LABELS[@]}"; do
         case "${FILTERED_ZMK_LABELS[$idx]}" in
-          *$KB*)
-            case "${FILTERED_ZMK_SHIELDS[$idx]}" in
-              *_left) [[ "$KB_PART_TARGET" = "right" ]] && FILTER_IDX+=("$idx") ;;
-              *_right) [[ "$KB_PART_TARGET" = "left" ]] && FILTER_IDX+=("$idx") ;;
-              settings_reset) [[ -n "$KB_PART_TARGET" ]] && FILTER_IDX+=("$idx") ;;
-            esac
-            ;;
-          *) FILTER_IDX+=("$idx") ;;
+        *$KB*)
+          case "${FILTERED_ZMK_SHIELDS[$idx]}" in
+          *_left) [[ "$KB_PART_TARGET" = "right" ]] && FILTER_IDX+=("$idx") ;;
+          *_right) [[ "$KB_PART_TARGET" = "left" ]] && FILTER_IDX+=("$idx") ;;
+          settings_reset) [[ -n "$KB_PART_TARGET" ]] && FILTER_IDX+=("$idx") ;;
+          esac
+          ;;
+        *) FILTER_IDX+=("$idx") ;;
         esac
       done
-    
+
       for idx in "${FILTER_IDX[@]}"; do
         unset "FILTERED_ZMK_LABELS[$idx]"
+        unset "FILTERED_ZMK_KEYBOARDS[$idx]"
         unset "FILTERED_ZMK_BOARDS[$idx]"
         unset "FILTERED_ZMK_SHIELDS[$idx]"
         unset "FILTERED_ZMK_EXTRA_SHIELDS[$idx]"
@@ -273,8 +282,9 @@ filter_build_configs() {
         unset "FILTERED_ZMK_ARTIFACTS[$idx]"
       done
     done
-    
+
     if [[ "$BUILD_ALL" = "n" ]]; then
+      ZMK_KEYBOARDS=("${FILTERED_ZMK_KEYBOARDS[@]}")
       ZMK_BOARDS=("${FILTERED_ZMK_BOARDS[@]}")
       ZMK_SHIELDS=("${FILTERED_ZMK_SHIELDS[@]}")
       ZMK_EXTRA_SHIELDS=("${FILTERED_ZMK_EXTRA_SHIELDS[@]}")
@@ -293,6 +303,7 @@ filter_build_configs() {
 # the following variables:
 #
 # - ZMK_LABELS
+# - ZMK_KEYBOARDS
 # - ZMK_BOARDS
 # - ZMK_SHIELDS
 # - ZMK_EXTRA_SHIELDS
@@ -311,18 +322,18 @@ filter_build_configs_interactively() {
   readarray CHOICES < <(
     for idx in "${!ZMK_ALL_LABELS[@]}"; do
       case "${ZMK_ALL_SHIELDS[$idx]}" in
-        *_left)
-          [[ "$KB_PART_TARGET" != "right" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
-          ;;
-        *_right)
-          [[ "$KB_PART_TARGET" != "left" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
-          ;;
-        settings_reset)
-          [[ -z "$KB_PART_TARGET" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
-          ;;
-        *)
-          printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
-          ;;
+      *_left)
+        [[ "$KB_PART_TARGET" != "right" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
+        ;;
+      *_right)
+        [[ "$KB_PART_TARGET" != "left" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
+        ;;
+      settings_reset)
+        [[ -z "$KB_PART_TARGET" ]] && printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
+        ;;
+      *)
+        printf "%d\t%s\n" "$idx" "${ZMK_ALL_LABELS[$idx]}"
+        ;;
       esac
     done | fzf -m --ansi -d "\t" --with-nth 2..
   )
@@ -330,8 +341,9 @@ filter_build_configs_interactively() {
     fail "User canceled"
   fi
   for OPT in "${CHOICES[@]}"; do
-    read -r -a RECORD <<< "${OPT}"
+    read -r -a RECORD <<<"${OPT}"
     idx="${RECORD[0]}"
+    ZMK_KEYBOARDS+=("${ZMK_ALL_KEYBOARDS[$idx]}")
     ZMK_BOARDS+=("${ZMK_ALL_BOARDS[$idx]}")
     ZMK_SHIELDS+=("${ZMK_ALL_SHIELDS[$idx]}")
     ZMK_EXTRA_SHIELDS+=("${ZMK_ALL_EXTRA_SHIELDS[$idx]}")
@@ -350,16 +362,19 @@ yq_remote_bin_name() {
   ARCH="$(uname -m)"
   YQ_BINARY="yq_${OS}"
   case "$OS" in
-    darwin) 
-      if [[ "$ARCH" = "arm"* ]]; then
-        YQ_BINARY="${YQ_BINARY}_arm64"
-      else
-        YQ_BINARY="${YQ_BINARY}_arm64"
-      fi
-      ;;
-    *)
-      YQ_BINARY=""
-      ;;
+  darwin)
+    if [[ "$ARCH" = "arm"* ]]; then
+      YQ_BINARY="${YQ_BINARY}_arm64"
+    else
+      YQ_BINARY="${YQ_BINARY}_arm64"
+    fi
+    ;;
+  linux*)
+    YQ_BINARY="${YQ_BINARY}_$ARCH"
+    ;;
+  *)
+    YQ_BINARY=""
+    ;;
   esac
   if [[ -n "$YQ_BINARY" ]]; then
     printf "%s" "${YQ_BINARY}"
@@ -383,27 +398,29 @@ yq_bin() {
         "Consider making a pull request with the changes on the script so we can support all" \
         "possible platforms!"
     fi
-    curl -L "${YQ_URL}/${YQ_BINARY}.tar.gz" \
-      | tar xz \
-      || fail "Failed to download the 'yq' binary from '${YQ_URL}/${YQ_BINARY}.tar.gz'"
+    curl -L "${YQ_URL}/${YQ_BINARY}.tar.gz" |
+      tar xz ||
+      fail "Failed to download the 'yq' binary from '${YQ_URL}/${YQ_BINARY}.tar.gz'"
     if ! mv "${YQ_BINARY}" "${YQ_TARGET_BINARY}"; then
       rm -rf "${YQ_BINARY}" >/dev/null 2>&1
       fail "Failed to move the 'yq' binary to the same binary directory of ZMK CLI"
     fi
-    chmod +x "${YQ_TARGET_BINARY}" \
-      || fail "Failed to change the 'executable' permission of 'yq' on ZMK CLI directory"
+    chmod +x "${YQ_TARGET_BINARY}" ||
+      fail "Failed to change the 'executable' permission of 'yq' on ZMK CLI directory"
     YQ_BINARY="${YQ_TARGET_BINARY}"
   fi
   printf "%s" "${YQ_BINARY}"
 }
 
 declare -a ZMK_ALL_LABELS
+declare -a ZMK_ALL_KEYBOARDS
 declare -a ZMK_ALL_BOARDS
 declare -a ZMK_ALL_SHIELDS
 declare -a ZMK_ALL_EXTRA_SHIELDS
 declare -a ZMK_ALL_CMAKE_ARGS
 declare -a ZMK_ALL_ARTIFACTS
 declare -a ZMK_BOARDS
+declare -a ZMK_KEYBOARDS
 declare -a ZMK_SHIELDS
 declare -a ZMK_EXTRA_SHIELDS
 declare -a ZMK_CMAKE_ARGS
@@ -411,12 +428,14 @@ declare -a ZMK_ARTIFACTS
 
 export OUT_LEVEL="normal"
 export ZMK_ALL_LABELS=()
+export ZMK_ALL_KEYBOARDS=()
 export ZMK_ALL_BOARDS=()
 export ZMK_ALL_SHIELDS=()
 export ZMK_ALL_EXTRA_SHIELDS=()
 export ZMK_ALL_CMAKE_ARGS=()
 export ZMK_ALL_ARTIFACTS=()
 export ZMK_BOARDS=()
+export ZMK_KEYBOARDS=()
 export ZMK_SHIELDS=()
 export ZMK_EXTRA_SHIELDS=()
 export ZMK_CMAKE_ARGS=()

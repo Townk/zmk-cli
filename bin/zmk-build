@@ -64,28 +64,53 @@ Usage: zmk build [options] <keyboard filter>|all
 EOF
 }
 
+# Given a Keyboard Name and a Shield, returns a string for the build directory
+# of the given shield of the given keyboard.
+build_dir() {
+  local KEYBOARD="$1"
+  local KB_SHIELD="$2"
+  local SUFFIX=''
+  if [[ "$KEYBOARD" != "$KB_SHIELD" ]]; then
+    case "$KB_SHIELD" in
+      *_left) SUFFIX='-left' ;;
+      *_right) SUFFIX='-right' ;;
+      *_reset) SUFFIX='-reset' ;;
+    esac
+  fi
+  printf "%s%s" "$KEYBOARD" "$SUFFIX" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' '-'
+}
+
 build() {
-  local BOARD="$1"
-  local MAIN_SHIELD="$2"
+  local KEYBOARD="$1"
+  local BOARD="$2"
+  local MAIN_SHIELD="$3"
   local EXTRA_SHIELDS
-  if [[ "$3" = "-" ]]; then
+  if [[ "$4" = "-" ]]; then
     EXTRA_SHIELDS=""
   else
-    EXTRA_SHIELDS=" $3"
+    EXTRA_SHIELDS=" $4"
   fi
   local -a CMAKE_FLAGS
-  if [[ "$4" = '-' ]]; then
+  if [[ "$5" = '-' ]]; then
     CMAKE_FLAGS=()
   else
-    read -r -a CMAKE_FLAGS < <(echo -n "$4")
+    read -r -a CMAKE_FLAGS < <(echo -n "$5")
   fi
   local PRISTINE_FLAG
   if [[ "$PRISTINE" = "y" ]]; then
     PRISTINE_FLAG="-p"
   fi
+  local BUILD_NAME
+  if [[ "$KEYBOARD" = "$MAIN_SHIELD" ]]; then
+    BUILD_NAME="${MAIN_SHIELD}"
+  else
+    BUILD_NAME="${KEYBOARD} (${MAIN_SHIELD})"
+  fi
+  local BUILD_DIR
+  BUILD_DIR="$WEST_ROOT/build/intermediate/$(build_dir "${KEYBOARD}" "$MAIN_SHIELD")"
 
-  echo "Building shield: $MAIN_SHIELD"
-  echo "-----------------$(echo -n "$MAIN_SHIELD" |  tr '[:print:]' '-')"
+  echo "Building firmware: $BUILD_NAME"
+  echo "-------------------$(echo -n "$BUILD_NAME" |  tr '[:print:]' '-')"
 
   local ZEPHYR_DIR
   ZEPHYR_DIR="$(west list -f '{name}|{abspath}' | grep -F 'zephyr|' | cut -d'|' -f2)"
@@ -93,25 +118,29 @@ build() {
   ZMK_DIR="$(west list -f '{name}|{abspath}' | grep -F 'zmk|' | cut -d'|' -f2)"
 
   if [[ -z "$PRISTINE_FLAG" ]]\
-    && [[ -f "$WEST_ROOT/build/intermediate/${MAIN_SHIELD}/zephyr/zmk.uf2" ]]; then
-      west build -d "$WEST_ROOT/build/intermediate/$MAIN_SHIELD" \
-        || fail "The firmware for shield '$MAIN_SHIELD' failed to build. Check the logs above."
+    && [[ -f "$BUILD_DIR/zephyr/zmk.uf2" ]]; then
+      west build -d "$BUILD_DIR" \
+        || fail "The firmware for the keyboard '$KEYBOARD', shield '$MAIN_SHIELD', failed to build. Check the logs above."
     else
       west build $PRISTINE_FLAG -s "$ZMK_DIR/app" \
-        -d "$WEST_ROOT/build/intermediate/$MAIN_SHIELD" \
+        -d "$BUILD_DIR" \
         -b "$BOARD" \
         -- -DZephyr_DIR="$ZEPHYR_DIR/share/zephyr-package/cmake" \
           -DSHIELD="${MAIN_SHIELD}${EXTRA_SHIELDS}" \
           -DZMK_CONFIG="$WEST_ROOT/config" \
           "${CMAKE_FLAGS[@]}" \
-        || fail "The firmware for shield '$MAIN_SHIELD' failed to build. Check the logs above."
+        || fail "The firmware for the keyboard '$KEYBOARD', shield '$MAIN_SHIELD', failed to build. Check the logs above."
   fi
   echo
 }
 
 store() {
-  local MAIN_SHIELD="$1"
-  local ARTIFACT_FILE_NAME="$2"
+  local KEYBOARD="$1"
+  local MAIN_SHIELD="$2"
+  local ARTIFACT_FILE_NAME="$3"
+
+  local BUILD_DIR
+  BUILD_DIR="$WEST_ROOT/build/intermediate/$(build_dir "${KEYBOARD}" "$MAIN_SHIELD")"
 
   if [[ ! -d "$WEST_ROOT/build/out" ]]; then
     mkdir -p "$WEST_ROOT/build/out" \
@@ -119,11 +148,11 @@ store() {
   fi
 
   cp -f \
-    "$WEST_ROOT/build/intermediate/${MAIN_SHIELD}/zephyr/zmk.uf2" \
+    "$BUILD_DIR/zephyr/zmk.uf2" \
     "$WEST_ROOT/build/out/$ARTIFACT_FILE_NAME.uf2" \
-    || fail "Failed to copy the '$MAIN_SHIELD' firmware to the output directory"
+    || fail "Failed to copy the keyboard '$KEYBOARD', shield '$MAIN_SHIELD', firmware to the output directory"
 
-  echo "Firmware of '$MAIN_SHIELD' located at 'build/out/$ARTIFACT_FILE_NAME.uf2'"
+  echo "Firmware of keyboard '$KEYBOARD', shield '$MAIN_SHIELD', located at 'build/out/$ARTIFACT_FILE_NAME.uf2'"
   echo
 }
 
@@ -131,10 +160,12 @@ clean() {
   echo "Cleaning artifacts of shield: $1"
   echo "------------------------------$(echo -n "$1" |  tr '[:print:]' '-')"
 
-  local MAIN_SHIELD="$1"
-  local ARTIFACT_FILE_NAME="$2"
-  local INTERMEDIARY_DIR="$WEST_ROOT/build/intermediate/$MAIN_SHIELD"
+  local KEYBOARD="$1"
+  local MAIN_SHIELD="$2"
+  local ARTIFACT_FILE_NAME="$3"
+  local INTERMEDIARY_DIR
   local ARTIFACT_FILE="$WEST_ROOT/build/out/$ARTIFACT_FILE_NAME.uf2"
+  INTERMEDIARY_DIR="$WEST_ROOT/build/intermediate/$(build_dir "${KEYBOARD}" "$MAIN_SHIELD")"
 
   if [[ -d "$INTERMEDIARY_DIR" ]]; then
     rm -rf "$INTERMEDIARY_DIR" \
@@ -223,14 +254,15 @@ if [[ "$ACTION" = "build" ]]; then
   for idx in "${!ZMK_BOARDS[@]}"; do
     echo
     if [[ "$FIRMWARE_TYPE" = "reset" ]]; then
-      build "${ZMK_BOARDS[$idx]}" "settings_reset"
-      store "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
+      build "${ZMK_KEYBOARDS[$idx]}" "${ZMK_BOARDS[$idx]}" "settings_reset"
+      store "${ZMK_KEYBOARDS[$idx]}" "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
     else
-      build "${ZMK_BOARDS[$idx]}" \
+      build "${ZMK_KEYBOARDS[$idx]}" \
+            "${ZMK_BOARDS[$idx]}" \
             "${ZMK_SHIELDS[$idx]}" \
             "${ZMK_EXTRA_SHIELDS[$idx]}" \
             "${ZMK_CMAKE_ARGS[$idx]}"
-      store "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
+      store "${ZMK_KEYBOARDS[$idx]}" "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
     fi
   done
 else
@@ -240,9 +272,9 @@ else
   for idx in "${!ZMK_BOARDS[@]}"; do
     echo
     if [[ "$FIRMWARE_TYPE" = "reset" ]]; then
-      clean "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
+      clean "${ZMK_KEYBOARDS[$idx]}" "settings_reset" "$(artifact_name "${ZMK_SHIELDS[$idx]}")-settings-reset"
     else
-      clean "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
+      clean "${ZMK_KEYBOARDS[$idx]}" "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
     fi
   done
 fi
