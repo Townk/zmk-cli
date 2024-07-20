@@ -60,7 +60,7 @@ require_west_project() {
 #
 # @param $1 {string} A ZMK shield name.
 artifact_name() {
-  print "%s" "zmk-$(printf "%s" "$1" | tr '_' '-')"
+  printf "%s" "zmk-$(printf "%s" "$1" | tr '_' '-')"
 }
 
 # Check if a config file (which is any file that lives in the `./config/`
