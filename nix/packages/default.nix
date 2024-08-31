@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: MIT
 #-------------------------------------------------------------------------------
 {
+  pkgs,
   callPackage,
   flake-root,
 }: {
-  pythonPackages = callPackage ./pythonPackages {};
+  keymap-drawer = pkgs.python3Packages.callPackage ./keymap-drawer.nix {};
   zmk-cli = callPackage ./zmk-cli.nix {inherit flake-root;};
 }

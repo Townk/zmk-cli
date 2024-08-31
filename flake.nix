@@ -19,7 +19,7 @@
         flake-root = ./.;
       in rec {
         packages = pkgs.callPackage ./nix/packages {inherit flake-root;};
-        devShell = pkgs.callPackage ./nix/shell {inherit (packages) pythonPackages zmk-cli;};
+        devShell = pkgs.callPackage ./nix/shell {inherit (packages) keymap-drawer zmk-cli;};
       }
     )
     // {

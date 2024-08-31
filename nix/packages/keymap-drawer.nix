@@ -9,37 +9,41 @@
 # This has the additional benefit of using the latest fixes on the project
 # before the maintainer publishes a new bersion to PyPI.
 {
-  pkgs,
-  python3Packages,
-  platformdirs3,
+  buildPythonApplication,
+  fetchFromGitHub,
+  lib,
+  pcpp,
+  platformdirs,
+  poetry-core,
+  pydantic,
+  pydantic-settings,
+  pyparsing,
+  pyyaml,
 }:
-python3Packages.buildPythonPackage rec {
-  name = "keymap-drawer";
-  version = "v0.17.0";
+buildPythonApplication rec {
+  pname = "keymap-drawer";
+  version = "0.18.0";
+  pyproject = true;
 
-  src = pkgs.fetchFromGitHub {
+  src = fetchFromGitHub {
     owner = "caksoylar";
-    repo = "${name}";
-    rev = "main";
-    sha256 = "sha256-eyCOkoVjK32cbLmC+Vgrge5ikW9nhxWc0XElUa76Ksw=";
+    repo = "${pname}";
+    rev = "061feefee1d1cbbae60a01fac57762ab6e7da440";
+    sha256 = "sha256-y/rHw9a7ylevsQn56hEqCCh1QTcKiahOdHtrXvCANuU=";
   };
 
-  format = "pyproject";
+  build-system = [poetry-core];
 
-  nativeBuildInputs = with python3Packages; [
-    poetry-core
-  ];
-
-  propagatedBuildInputs = with python3Packages; [
+  propagatedBuildInputs = [
     pcpp
-    platformdirs3
+    platformdirs
     pydantic
     pydantic-settings
     pyparsing
     pyyaml
   ];
 
-  meta = with pkgs; {
+  meta = {
     homepage = "https://github.com/caksoylar/keymap-drawer";
     description = "Visualize keymaps that use advanced features like hold-taps and combos, with automatic parsing ";
     license = lib.licenses.mit;

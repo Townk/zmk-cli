@@ -178,6 +178,39 @@ clean() {
   fi
 }
 
+pack_artifacts() {
+  local PACKAGE_NAME="$1"
+  shift
+  local -a ARTIFACTS
+  local ARTIFACT
+  for ARTIFACT in "$@"; do
+    ARTIFACTS+=("$WEST_ROOT/build/out/${ARTIFACT}.uf2")
+  done
+
+  if [[ ! -d "$WEST_ROOT/build/pkgs" ]]; then
+    mkdir -p "$WEST_ROOT/build/pkgs"
+  fi
+
+  zip -9 -j "$WEST_ROOT/build/pkgs/${PACKAGE_NAME}".zip "${ARTIFACTS[@]}"
+}
+
+pack() {
+  local LAST_KB="${ZMK_KEYBOARDS[0]}"
+  local -a PACK_ARTIFACTS
+  for idx in "${!ZMK_BOARDS[@]}"; do
+    if [[ "${ZMK_KEYBOARDS[$idx]}" = "$LAST_KB" ]]; then
+      PACK_ARTIFACTS+=("${ZMK_ARTIFACTS[$idx]}")
+    else
+      PACK_NAME="$(printf "%s\n" "${PACK_ARTIFACTS[@]}" | sed -e '$!{N;s/^\(.*\).*\n\1.*$/\1\n\1/;D;}')"
+      pack_artifacts "${PACK_NAME%*-}" "${PACK_ARTIFACTS[@]}"
+      PACK_ARTIFACTS=("${ZMK_ARTIFACTS[$idx]}")
+      LAST_KB="${ZMK_KEYBOARDS[$idx]}"
+    fi
+  done
+  PACK_NAME="$(printf "%s\n" "${PACK_ARTIFACTS[@]}" | sed -e '$!{N;s/^\(.*\).*\n\1.*$/\1\n\1/;D;}')"
+  pack_artifacts "${PACK_NAME%*-}" "${PACK_ARTIFACTS[@]}"
+}
+
 WEST_ROOT="$(require_west_project)"
 ACTION="build"
 BUILD_SPLIT=""
@@ -265,6 +298,7 @@ if [[ "$ACTION" = "build" ]]; then
       store "${ZMK_KEYBOARDS[$idx]}" "${ZMK_SHIELDS[$idx]}" "${ZMK_ARTIFACTS[$idx]}"
     fi
   done
+  pack
 else
   echo "ZMK Firmware Artifacts Clean Up"
   echo "==============================="

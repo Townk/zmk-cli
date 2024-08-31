@@ -4,7 +4,7 @@
 #-------------------------------------------------------------------------------
 {
   pkgs,
-  pythonPackages,
+  keymap-drawer,
   zmk-cli,
 }:
 with pkgs; let
@@ -19,6 +19,7 @@ in
       ninja
       yq-go
       zmk-cli
+      keymap-drawer
       (python3.withPackages (ps: [
         # From https://github.com/zmkfirmware/zephyr/blob/HEAD/scripts/requirements-base.txt
         ps.west
@@ -34,7 +35,6 @@ in
         ps.requests
         ps.anytree
         ps.intelhex
-        pythonPackages.keymap-drawer
       ]))
     ];
 
