@@ -5,21 +5,41 @@
 {
   description = "Build environment for ZMK local builds";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+
+    flake-utils.url = "github:numtide/flake-utils";
+
+    zephyr = {
+      # Customize the version of Zephyr used by the flake here
+      url = "github:zephyrproject-rtos/zephyr/v3.5.0";
+      flake = false;
+    };
+
+    zephyr-nix = {
+      url = "github:adisbladis/zephyr-nix";
+      # inputs.nixpkgs.follows = "nixpkgs";
+      inputs.zephyr.follows = "zephyr";
+    };
+  };
 
   outputs = {
-    self,
     nixpkgs,
     flake-utils,
+    zephyr-nix,
+    ...
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
         flake-root = ./.;
+        zephyr = zephyr-nix.packages.${system};
       in rec {
         packages = pkgs.callPackage ./nix/packages {inherit flake-root;};
-        devShell = pkgs.callPackage ./nix/shell {inherit (packages) keymap-drawer zmk-cli;};
+        devShell = pkgs.callPackage ./nix/shell {
+          inherit (packages) keymap-drawer zmk-cli;
+          inherit zephyr;
+        };
       }
     )
     // {
